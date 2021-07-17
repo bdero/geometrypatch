@@ -1,0 +1,9 @@
+# Build artifacts
+cmake-build*/
+CMakeCache.txt
+CMakeFiles/
+generated/
+dist/
+# Editors
+.idea/
+*~
