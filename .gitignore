@@ -4,6 +4,8 @@ CMakeCache.txt
 CMakeFiles/
 generated/
 dist/
+build/
+
 # Editors
 .idea/
 *~

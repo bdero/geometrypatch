@@ -1,3 +1,7 @@
+// GeometryWars Patcher
+// https://github.com/bdero/geometrypatch
+
+#include <filesystem>
 #include <format>
 #include <fstream>
 #include <map>
@@ -28,7 +32,7 @@ std::map<std::string, Patch> PATCHES{
 
 struct {
   Fl_Window* window;
-  Fl_Input* file_input;
+  Fl_Input* directory_input;
   Fl_Button* file_browse_button;
   Fl_Text_Display* validation_display;
   Fl_Text_Buffer* validation_buffer;
@@ -82,18 +86,20 @@ void FindSignature(std::istream& stream, Patch& patch) {
   patch.location = std::nullopt;
 }
 
-void ValidateFile(const char* filename) {
+void ValidateDirectory(const std::filesystem::path& path) {
   w.validation_buffer->text("");
   w.validation_style_buffer->text("");
 
-  std::ifstream file(filename, std::ios::binary);
+  std::ifstream file(path / "testapp.exe", std::ios::binary);
   if (file.fail()) {
-    AppendValidationLine("Failed to open file.", 'C');
+    AppendValidationLine(
+        "Failed to find the unpacked GeometryWars binary (testapp.exe)", 'C');
 
     w.patch_button->deactivate();
     return;
   }
-  AppendValidationLine("File opened.", 'B');
+  AppendValidationLine("Found the unpacked GeometryWars binary (testapp.exe).",
+                       'B');
 
   SHA1 digest;
   digest.update(file);
@@ -122,6 +128,107 @@ void ValidateFile(const char* filename) {
 
   file.close();
 
+  if (patch.location.has_value()) {
+    w.patch_button->activate();
+  } else {
+    w.patch_button->deactivate();
+  }
+}
+
+void PatchGame(const std::filesystem::path& path) {
+  std::ifstream original_file(path / "testapp.exe",
+                              std::ios::binary | std::ios::ate);
+  std::streamsize size = original_file.tellg();
+  original_file.seekg(0, std::ios::beg);
+
+  std::vector<char> patched_buffer(size);
+  if (!original_file.read(patched_buffer.data(), size)) {
+    AppendValidationLine(
+        "Failed to load `testapp.exe` into memory. Patching failed.", 'C');
+    return;
+  }
+  original_file.close();
+
+  for (const auto& [key, value] : PATCHES) {
+    if (!value.location.has_value()) {
+      continue;
+    }
+    std::memcpy(patched_buffer.data() + value.location.value(),
+                value.patch.data(), value.patch.size());
+    AppendValidationLine(std::format("Applied patch: {}", key), 'B');
+  }
+
+  auto backup_path = path / "GeometryWars.exe.original";
+  auto exe_path = path / "GeometryWars.exe";
+  if (!std::filesystem::exists(backup_path)) {
+    // If There is no backup, make one.
+    std::filesystem::rename(exe_path, backup_path);
+    AppendValidationLine(
+        "Backed up `GeometryWars.exe` as `GeometryWars.exe.original`.", 'A');
+  } else {
+    // If there's already a backup, assume the original is patched and delete
+    // it.
+    std::filesystem::remove(exe_path);
+    AppendValidationLine("`GeometryWars.exe.original` backup already exists.",
+                         'A');
+  }
+
+  std::ofstream new_file(exe_path, std::ios::binary);
+  new_file.write(patched_buffer.data(),
+                 static_cast<std::streamsize>(patched_buffer.size()));
+  new_file.close();
+
+  AppendValidationLine("Patched file saved as `GeometryWars.exe`!", 'B');
+}
+
+void BrowseForFile(Fl_Widget* _) {
+  Fl_Native_File_Chooser file_chooser;
+  file_chooser.title("GeometryWars game directory");
+  file_chooser.type(Fl_Native_File_Chooser::BROWSE_DIRECTORY);
+  file_chooser.directory(w.directory_input->value());
+
+  if (file_chooser.show() == 0) {
+    w.directory_input->value(file_chooser.filename());
+    ValidateDirectory(file_chooser.filename());
+  }
+}
+
+int main(int argc, char** argv) {
+  w.window = new Fl_Window(
+      650, 210, "GeometryWars Patcher - github.com/bdero/geometrypatch");
+  w.window->icon()
+
+  w.directory_input = new Fl_Input(10, 10, w.window->w() - 100 - 30, 30);
+  w.directory_input->value(
+      "C:/Program Files (x86)/Steam/steamapps/common/Geometry Wars");
+  w.directory_input->when(FL_WHEN_CHANGED);
+  w.directory_input->callback([](Fl_Widget* input) {
+    ValidateDirectory(reinterpret_cast<Fl_Input*>(input)->value());
+  });
+
+  w.file_browse_button = new Fl_Button(
+      w.directory_input->x() + w.directory_input->w() + 10,
+      w.directory_input->y(), w.window->w() - w.directory_input->w() - 30,
+      w.directory_input->h(), "@fileopen  Browse");
+  w.file_browse_button->callback(BrowseForFile);
+
+  w.validation_display = new Fl_Text_Display(10, w.directory_input->h() + 20,
+                                             w.window->w() - 20, 110);
+  w.validation_buffer = new Fl_Text_Buffer();
+  w.validation_style_buffer = new Fl_Text_Buffer();
+  w.validation_display->buffer(w.validation_buffer);
+
+  w.patch_button =
+      new Fl_Button(w.window->w() / 2 - 75,
+                    w.directory_input->h() + w.validation_display->h() + 30,
+                    150, 30, "@filesaveas  Patch");
+  w.patch_button->deactivate();
+  w.patch_button->callback(
+      [](Fl_Widget* _) { PatchGame(w.directory_input->value()); });
+
+  w.window->end();
+  w.window->show(argc, argv);
+
   static Fl_Text_Display::Style_Table_Entry styletable[] = {
       {FL_BLACK, FL_COURIER, FL_NORMAL_SIZE},            // A - Info
       {FL_DARK_GREEN, FL_COURIER_BOLD, FL_NORMAL_SIZE},  // B - Success
@@ -131,61 +238,7 @@ void ValidateFile(const char* filename) {
       w.validation_style_buffer, styletable,
       sizeof(styletable) / sizeof(styletable[0]), 'A', nullptr, nullptr);
 
-  if (patch.location.has_value()) {
-    w.patch_button->activate();
-  } else {
-    w.patch_button->deactivate();
-  }
-}
-
-void BrowseForFile(Fl_Widget* _) {
-  Fl_Native_File_Chooser file_chooser;
-  file_chooser.title("Open unpacked GeometryWars (testapp.exe)");
-  file_chooser.type(Fl_Native_File_Chooser::BROWSE_FILE);
-  file_chooser.filter("Unpacked GeometryWars\ttestapp.exe");
-  file_chooser.preset_file(w.file_input->value());
-
-  if (file_chooser.show() == 0) {
-    w.file_input->value(file_chooser.filename());
-    ValidateFile(file_chooser.filename());
-  }
-}
-
-int main(int argc, char** argv) {
-  w.window = new Fl_Window(
-      650, 210, "GeometryWars Patcher - github.com/bdero/geometrypatch");
-
-  w.file_input = new Fl_Input(10, 10, w.window->w() - 100 - 30, 30);
-  w.file_input->value(
-      "C:/Program Files (x86)/Steam/steamapps/common/Geometry "
-      "Wars/testapp.exe");
-  w.file_input->when(FL_WHEN_CHANGED);
-  w.file_input->callback([](Fl_Widget* input) {
-    ValidateFile(reinterpret_cast<Fl_Input*>(input)->value());
-  });
-
-  w.file_browse_button =
-      new Fl_Button(w.file_input->x() + w.file_input->w() + 10,
-                    w.file_input->y(), w.window->w() - w.file_input->w() - 30,
-                    w.file_input->h(), "@fileopen  Browse");
-  w.file_browse_button->callback(BrowseForFile);
-
-  w.validation_display =
-      new Fl_Text_Display(10, w.file_input->h() + 20, w.window->w() - 20, 110);
-  w.validation_buffer = new Fl_Text_Buffer();
-  w.validation_style_buffer = new Fl_Text_Buffer();
-  w.validation_display->buffer(w.validation_buffer);
-
-  w.patch_button =
-      new Fl_Button(w.window->w() / 2 - 75,
-                    w.file_input->h() + w.validation_display->h() + 30, 150, 30,
-                    "@filesaveas  Patch");
-  w.patch_button->deactivate();
-
-  w.window->end();
-  w.window->show(argc, argv);
-
-  ValidateFile(w.file_input->value());
+  ValidateDirectory(w.directory_input->value());
 
   return Fl::run();
 }

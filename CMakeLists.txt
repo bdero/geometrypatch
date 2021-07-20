@@ -8,7 +8,7 @@ message(STATUS "Using C++ compiler: ${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILE
 
 # Add sources
 file(GLOB_RECURSE SOURCE_FILES "src/*.cc" "src/*.c" "src/*.h")
-add_executable(${PROJECT_NAME} ${SOURCE_FILES})
+add_executable(${PROJECT_NAME} WIN32 ${SOURCE_FILES})
 
 add_subdirectory(deps/fltk)
 
